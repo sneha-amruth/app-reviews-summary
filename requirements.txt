@@ -1,10 +1,6 @@
 pandas
 streamlit
-google-generativeai
-python-dotenv
 google-play-scraper
-
-textblob
-
+kaggle
+numbers-parser
 vaderSentiment
-

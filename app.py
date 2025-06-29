@@ -1,63 +1,246 @@
 import streamlit as st
 import pandas as pd
-from utils import load_reviews_for_app, analyze_reviews_with_vader
-import datetime
+import datetime as dt
+import os
+from kaggle.api.kaggle_api_extended import KaggleApi
+from numbers_parser import Document
 
-st.set_page_config(page_title="App Review Analysis", layout="wide")
+# Try to import plotly, but make it optional
+PLOTLY_AVAILABLE = False
 
-st.title("App Review Analysis Workflow")
-st.write("Follow the two-step process to fetch, download, and analyze reviews.")
+# Simple theme detection
+def get_theme():
+    """Get the current theme settings"""
+    try:
+        # Try to get theme from URL parameters using new API
+        if hasattr(st, 'query_params') and 'theme' in st.query_params:
+            return {'base': st.query_params['theme']}
+    except:
+        pass
+    return {'base': 'light'}
 
+from utils import load_reviews_for_app, analyze_sentiments_with_vader
+
+# Set page config with emoji favicon
+st.set_page_config(
+    page_title="App Review Analyzer",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS for better styling
+st.markdown("""
+<style>
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+    .stButton>button {
+        width: 100%;
+        border-radius: 8px;
+    }
+    .stDownloadButton>button {
+        width: 100%;
+        border-radius: 8px;
+    }
+    .stProgress > div > div > div > div {
+        background-color: #4CAF50;
+    }
+    .stAlert {
+        border-radius: 8px;
+    }
+    .stExpander {
+        border-radius: 8px;
+        border: 1px solid rgba(49, 51, 63, 0.2);
+        padding: 1rem;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+def fetch_and_load_kaggle_dataset(dataset_slug, download_path='/tmp/kaggle_data'):
+    """Downloads a dataset from Kaggle, unzips it, and loads data from the first CSV or Numbers file found."""
+    if not os.path.exists(download_path):
+        os.makedirs(download_path)
+
+    api = KaggleApi()
+    api.authenticate()
+    
+    st.info(f"Downloading dataset '{dataset_slug}' from Kaggle...")
+    api.dataset_download_files(dataset_slug, path=download_path, unzip=True)
+    st.info("Download complete. Loading data...")
+
+    for file in os.listdir(download_path):
+        if file.endswith('.csv'):
+            file_path = os.path.join(download_path, file)
+            try:
+                df = pd.read_csv(file_path)
+                st.success(f"Successfully loaded data from '{file}'.")
+                return df
+            except Exception as e:
+                st.error(f"Failed to read CSV file '{file}': {e}")
+                return pd.DataFrame()
+
+    for file in os.listdir(download_path):
+        if file.endswith('.numbers'):
+            file_path = os.path.join(download_path, file)
+            try:
+                doc = Document(file_path)
+                sheets = doc.sheets
+                tables = sheets[0].tables
+                rows_as_cells = tables[0].rows()
+                header = [cell.value for cell in rows_as_cells[0]]
+                data_values = [[cell.value for cell in row] for row in rows_as_cells[1:]]
+                df = pd.DataFrame(data_values, columns=header)
+                st.success(f"Successfully loaded data from Apple Numbers file '{file}'.")
+                return df
+            except Exception as e:
+                st.error(f"Failed to read Numbers file '{file}': {e}")
+                return pd.DataFrame()
+    
+    st.error("No compatible CSV or Numbers file found in the downloaded dataset.")
+    return pd.DataFrame()
+
+# App title
+st.title("📱 App Review Analyzer")
+
+# Add a divider
+st.markdown("---")
+
+# Sidebar with app selection
+st.sidebar.title("📋 App Selection")
+selected_app = st.sidebar.selectbox(
+    "Choose an app to analyze:",
+    ['Navi', 'Kiwi', 'super.money', 'Pop'],
+    index=0
+)
+
+# App configurations
 APPS = {
-    'Navi': 'com.naviapp',
-    'Kiwi': 'in.gokiwi.kiwitpap',
-    'super.money': 'money.super.payments',
-    'Pop': 'com.popclub.android'
+    'Navi': {
+        'id': 'com.naviapp',
+        'source': 'kaggle',
+        'dataset': 'snehaamruth/navi-play-store-reviews-may-2024-to-jun-2025'
+    },
+    'Kiwi': {
+        'id': 'in.gokiwi.kiwitpap',
+        'source': 'kaggle',
+        'dataset': 'snehaamruth/kiwi-play-store-reviews-may-2024-to-jun-2025'
+    },
+    'Pop': {
+        'id': 'com.popclub.android',
+        'source': 'kaggle',
+        'dataset': 'snehaamruth/pop-play-store-reviews-may-2024-to-jun-2025'
+    },
+    'super.money': {
+        'id': 'money.super.payments',
+        'source': 'playstore'
+    }
 }
 
-for app_name, app_id in APPS.items():
-    with st.expander(f"Process Reviews for {app_name}", expanded=True):
-        st.subheader(f"Step 1: Fetch Reviews for {app_name}")
-        if st.button(f"Fetch Latest Reviews", key=f"fetch_{app_id}"):
-            with st.spinner(f"Fetching reviews for {app_name}..."):
-                reviews_df = load_reviews_for_app(app_name, app_id)
-                if reviews_df.empty:
-                    st.warning(f"No new reviews found for {app_name} since October 2024.")
-                    if f'fetched_reviews_{app_id}' in st.session_state:
-                        del st.session_state[f'fetched_reviews_{app_id}']
+# Main content area
+app_config = APPS[selected_app]
+app_id = app_config['id']
+
+# Get theme info
+is_dark = get_theme().get('base', 'light') == 'dark'
+
+st.markdown(f"## {selected_app}")
+st.markdown("---")
+
+# Fetch button
+if st.button("🔄 Fetch Reviews", key=f"fetch_{app_id}", type="primary"):
+        with st.spinner("🔄 Fetching reviews... This may take a moment..."):
+            try:
+                if app_config['source'] == 'kaggle':
+                    reviews_df = fetch_and_load_kaggle_dataset(app_config['dataset'])
                 else:
-                    st.success(f"Successfully fetched {len(reviews_df)} reviews.")
-                    st.session_state[f'fetched_reviews_{app_id}'] = reviews_df
+                    reviews_df = load_reviews_for_app(selected_app, app_id)
+                
+                if not reviews_df.empty:
+                    # Convert date column if it exists
+                    if 'at' in reviews_df.columns:
+                        reviews_df['date'] = pd.to_datetime(reviews_df['at']).dt.date
+                    elif 'date' in reviews_df.columns:
+                        reviews_df['date'] = pd.to_datetime(reviews_df['date']).dt.date
+                    
+                    st.session_state['current_reviews'] = reviews_df
+                    st.session_state['current_app'] = selected_app
+                    st.rerun()
+                else:
+                    st.error("No reviews found. Please try again later.")
+            except Exception as e:
+                st.error(f"Error fetching reviews: {str(e)}")
 
-        if f'fetched_reviews_{app_id}' in st.session_state:
-            reviews_df = st.session_state[f'fetched_reviews_{app_id}']
-            st.subheader(f"Step 2: Download or Analyze")
-            
-            st.download_button(
-                label=f"Download {len(reviews_df)} Reviews (CSV)",
-                data=reviews_df.to_csv(index=False).encode('utf-8'),
-                file_name=f"{app_name}_reviews_{datetime.date.today()}.csv",
-                mime='text/csv',
-                key=f"download_{app_id}"
-            )
-
-            if st.button(f"Analyze {len(reviews_df)} Reviews", key=f"analyze_{app_id}"):
-                st.info(f"Analyzing reviews for {app_name}. This may take a few minutes...")
+# Show analysis section if reviews are loaded
+if 'current_reviews' in st.session_state and st.session_state['current_app'] == selected_app:
+    reviews_df = st.session_state['current_reviews']
+    
+    # Date filtering removed for simplicity
+    
+    # Review stats
+    st.caption(f"📊 {len(reviews_df):,} reviews")
+    
+    # Analysis button
+    if st.button("✨ Analyze Sentiment", type="primary"):
+        st.session_state['analyze_clicked'] = True
+        
+        if 'analyze_clicked' in st.session_state and st.session_state['analyze_clicked']:
+            with st.spinner("🔍 Analyzing sentiment (this may take a moment)..."):
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
-                results_df, summary = analyze_reviews_with_vader(
-                    reviews_df,
-                    progress_bar=progress_bar,
-                    status_text=status_text
-                )
-                
-                st.session_state[f'analysis_results_{app_id}'] = (results_df, summary)
-                status_text.success(f"Analysis complete for {app_name}!")
-                progress_bar.empty()
-
-        if f'analysis_results_{app_id}' in st.session_state:
-            results_df, summary = st.session_state[f'analysis_results_{app_id}']
-            st.subheader(f"Analysis Results for {app_name}")
-            st.write(summary)
-            st.dataframe(results_df)
+                try:
+                    analyzed_df, summary = analyze_sentiments_with_vader(reviews_df, progress_bar, status_text)
+                    st.session_state['analysis_results'] = (analyzed_df, summary)
+                    st.session_state['analyze_clicked'] = False
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Analysis error: {str(e)}")
+                finally:
+                    progress_bar.empty()
+    
+    # Show analysis results if available
+    if 'analysis_results' in st.session_state:
+        results_df, summary = st.session_state['analysis_results']
+        
+        # Sentiment results
+        st.markdown("### Sentiment Analysis")
+        
+        # Show sentiment distribution
+        sentiment_counts = results_df['sentiment'].value_counts()
+        st.bar_chart(sentiment_counts)
+        
+        # Show counts in a compact way
+        cols = st.columns(4)
+        for i, (sentiment, count) in enumerate(sentiment_counts.items()):
+            with cols[i % 4]:
+                st.metric(sentiment, f"{count:,}")
+        
+        # Show summary
+        with st.expander("View Summary"):
+            st.markdown(summary)
+        
+        # Download button
+        st.download_button(
+            label="💾 Download Results",
+            data=results_df.to_csv(index=False).encode('utf-8'),
+            file_name=f"{selected_app.lower().replace(' ', '_')}_analysis_{dt.date.today().strftime('%Y%m%d')}.csv",
+            mime='text/csv'
+        )
+        
+        # Detailed results in expander
+        with st.expander("📋 View Detailed Results", expanded=False):
+            st.dataframe(
+                results_df,
+                column_config={
+                    'review': st.column_config.TextColumn("Review", width="large"),
+                    'sentiment': st.column_config.TextColumn("Sentiment"),
+                    'score': st.column_config.NumberColumn("Rating", format="%d ⭐")
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+else:
+    # Empty state
+    st.info("Click 'Fetch Reviews' to begin analysis")
