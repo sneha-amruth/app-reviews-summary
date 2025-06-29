@@ -4,3 +4,4 @@ google-play-scraper
 kaggle
 numbers-parser
 vaderSentiment
+emoji==2.6.0
