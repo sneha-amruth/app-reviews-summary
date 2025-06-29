@@ -79,7 +79,16 @@ def load_uploaded_file(uploaded_file):
 def fetch_and_load_kaggle_dataset(dataset_slug, download_path='/tmp/kaggle_data'):
     """Downloads a dataset from Kaggle, unzips it, and loads data from the first CSV or Numbers file found."""
     if not KAGGLE_AVAILABLE:
-        st.error("Kaggle API is not available in this environment. Please upload your data file directly.")
+        st.error("Kaggle API is not available in this environment.")
+        return None
+
+    # Set up Kaggle credentials from Streamlit secrets
+    if 'kaggle' in st.secrets:
+        os.environ['KAGGLE_USERNAME'] = st.secrets['kaggle']['username']
+        os.environ['KAGGLE_KEY'] = st.secrets['kaggle']['key']
+    else:
+        st.error("Kaggle API credentials not found in Streamlit secrets.")
+        st.info("Please add your Kaggle credentials in the Streamlit secrets.")
         return None
         
     if not os.path.exists(download_path):
@@ -118,33 +127,23 @@ def fetch_and_load_kaggle_dataset(dataset_slug, download_path='/tmp/kaggle_data'
 # App title
 st.title("📱 App Review Analyzer")
 
-# Data source selection
-data_source = st.radio(
-    "Select data source:",
-    ["Upload a file", "Use Kaggle dataset"],
-    horizontal=True
+# Kaggle Dataset Input
+st.markdown("### Load Data from Kaggle")
+
+# Example dataset (you can change this default)
+default_dataset = "lava18/google-play-store-apps"
+dataset_slug = st.text_input(
+    "Enter Kaggle dataset (e.g., 'username/dataset-name')",
+    value=default_dataset,
+    help="The dataset should be in CSV or Excel format with app review data"
 )
 
-if data_source == "Upload a file":
-    uploaded_file = st.file_uploader("Upload your app reviews (CSV or Excel)", type=['csv', 'xlsx', 'xls'])
-    if uploaded_file is not None:
-        reviews_df = load_uploaded_file(uploaded_file)
+if st.button("Load from Kaggle") and dataset_slug:
+    with st.spinner("Fetching data from Kaggle..."):
+        reviews_df = fetch_and_load_kaggle_dataset(dataset_slug)
         if reviews_df is not None:
             st.session_state['current_reviews'] = reviews_df
-            st.session_state['current_app'] = "Uploaded Data"
-else:
-    # Kaggle dataset input
-    dataset_slug = st.text_input(
-        "Enter Kaggle dataset (e.g., 'username/dataset-name')",
-        help="The dataset should be in CSV or Excel format with app review data"
-    )
-    
-    if st.button("Load from Kaggle") and dataset_slug:
-        with st.spinner("Fetching data from Kaggle..."):
-            reviews_df = fetch_and_load_kaggle_dataset(dataset_slug)
-            if reviews_df is not None:
-                st.session_state['current_reviews'] = reviews_df
-                st.session_state['current_app'] = f"Kaggle: {dataset_slug}"
+            st.session_state['current_app'] = f"Kaggle: {dataset_slug}"
 
 # Add a divider
 st.markdown("---")
