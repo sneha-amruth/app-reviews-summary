@@ -83,12 +83,33 @@ def fetch_and_load_kaggle_dataset(dataset_slug, download_path='/tmp/kaggle_data'
         return None
 
     # Set up Kaggle credentials from Streamlit secrets
-    if 'kaggle' in st.secrets:
-        os.environ['KAGGLE_USERNAME'] = st.secrets['kaggle']['username']
-        os.environ['KAGGLE_KEY'] = st.secrets['kaggle']['key']
-    else:
-        st.error("Kaggle API credentials not found in Streamlit secrets.")
-        st.info("Please add your Kaggle credentials in the Streamlit secrets.")
+    try:
+        # Try the new format first (nested under [kaggle] section)
+        if 'kaggle' in st.secrets and 'username' in st.secrets['kaggle'] and 'key' in st.secrets['kaggle']:
+            os.environ['KAGGLE_USERNAME'] = st.secrets['kaggle']['username']
+            os.environ['KAGGLE_KEY'] = st.secrets['kaggle']['key']
+        # Try the flat format as fallback
+        elif 'KAGGLE_USERNAME' in st.secrets and 'KAGGLE_KEY' in st.secrets:
+            os.environ['KAGGLE_USERNAME'] = st.secrets['KAGGLE_USERNAME']
+            os.environ['KAGGLE_KEY'] = st.secrets['KAGGLE_KEY']
+        else:
+            st.error("Kaggle API credentials not found in Streamlit secrets.")
+            st.info("Please add your Kaggle credentials in the Streamlit secrets using this format:")
+            st.code('''[kaggle]\nusername = "your_kaggle_username"\nkey = "your_kaggle_key"''')
+            return None
+            
+        # Create .kaggle directory and write the credentials file
+        kaggle_dir = os.path.expanduser('~/.kaggle')
+        os.makedirs(kaggle_dir, exist_ok=True)
+        
+        with open(os.path.join(kaggle_dir, 'kaggle.json'), 'w') as f:
+            f.write(f'{{"username":"{os.environ["KAGGLE_USERNAME"]}","key":"{os.environ["KAGGLE_KEY"]}"}}')
+        
+        # Set the correct permissions
+        os.chmod(os.path.join(kaggle_dir, 'kaggle.json'), 0o600)
+        
+    except Exception as e:
+        st.error(f"Error setting up Kaggle credentials: {str(e)}")
         return None
         
     # Clean up download directory
