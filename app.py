@@ -77,7 +77,7 @@ def load_uploaded_file(uploaded_file):
         return None
 
 def fetch_and_load_kaggle_dataset(dataset_slug, download_path='/tmp/kaggle_data'):
-    """Downloads a dataset from Kaggle, unzips it, and loads data from the first CSV or Numbers file found."""
+    """Downloads a dataset from Kaggle, unzips it, and loads data from the first CSV or Excel file found."""
     if not KAGGLE_AVAILABLE:
         st.error("Kaggle API is not available in this environment.")
         return None
@@ -91,37 +91,65 @@ def fetch_and_load_kaggle_dataset(dataset_slug, download_path='/tmp/kaggle_data'
         st.info("Please add your Kaggle credentials in the Streamlit secrets.")
         return None
         
-    if not os.path.exists(download_path):
-        os.makedirs(download_path)
+    # Clean up download directory
+    import shutil
+    if os.path.exists(download_path):
+        shutil.rmtree(download_path)
+    os.makedirs(download_path)
 
     try:
         api = KaggleApi()
         api.authenticate()
         
         st.info(f"Downloading dataset '{dataset_slug}' from Kaggle...")
-        api.dataset_download_files(dataset_slug, path=download_path, unzip=True)
+        api.dataset_download_files(dataset_slug, path=download_path, unzip=True, quiet=False)
         st.info("Download complete. Loading data...")
 
-        for file in os.listdir(download_path):
-            if file.endswith(('.csv', '.xls', '.xlsx')):
-                file_path = os.path.join(download_path, file)
-                try:
-                    if file.endswith('.csv'):
-                        df = pd.read_csv(file_path)
-                    else:  # Excel files
-                        df = pd.read_excel(file_path)
-                    st.success(f"Successfully loaded data from '{file}'.")
-                    return df
-                except Exception as e:
-                    st.error(f"Failed to read file '{file}': {e}")
-                    continue
+        # Debug: List all files in the download directory
+        all_files = []
+        for root, dirs, files in os.walk(download_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                all_files.append(file_path)
         
-        st.error("No compatible CSV or Excel file found in the downloaded dataset.")
+        st.info(f"Found {len(all_files)} files in the dataset.")
+        
+        # Try to find and load data files
+        for file_path in all_files:
+            try:
+                file_ext = os.path.splitext(file_path)[1].lower()
+                if file_ext == '.csv':
+                    df = pd.read_csv(file_path)
+                elif file_ext in ['.xls', '.xlsx']:
+                    df = pd.read_excel(file_path)
+                elif file_ext == '.json':
+                    df = pd.read_json(file_path)
+                elif file_ext == '.parquet':
+                    df = pd.read_parquet(file_path)
+                else:
+                    continue
+                
+                if not df.empty:
+                    st.success(f"Successfully loaded data from '{os.path.basename(file_path)}' with shape {df.shape}")
+                    return df
+                
+            except Exception as e:
+                st.warning(f"Could not read {file_path}: {str(e)}")
+                continue
+        
+        # If we get here, no files were successfully loaded
+        st.error("No compatible data files found in the dataset. Here are the files we found:")
+        for i, file_path in enumerate(all_files, 1):
+            st.write(f"{i}. {file_path}")
+            
         return None
         
     except Exception as e:
-        st.error(f"Error accessing Kaggle: {e}")
-        st.info("Please make sure you have set up your Kaggle API credentials correctly.")
+        st.error(f"Error accessing Kaggle: {str(e)}")
+        st.info("Please check:")
+        st.info("1. The dataset name is correct")
+        st.info("2. You have access to the dataset (some are private)")
+        st.info("3. The dataset contains supported file types (CSV, Excel, JSON, Parquet)")
         return None
 
 # App title
