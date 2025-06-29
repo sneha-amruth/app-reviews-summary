@@ -76,40 +76,44 @@ def load_uploaded_file(uploaded_file):
         st.error(f"Error reading file: {e}")
         return None
 
+def setup_kaggle():
+    """Set up Kaggle API with credentials from environment variables."""
+    try:
+        # Try to get credentials from environment variables
+        username = os.environ.get('KAGGLE_USERNAME')
+        key = os.environ.get('KAGGLE_KEY')
+        
+        # If not in environment, try to get from Streamlit secrets
+        if not (username and key) and hasattr(st, 'secrets'):
+            if 'kaggle' in st.secrets and 'username' in st.secrets['kaggle'] and 'key' in st.secrets['kaggle']:
+                username = st.secrets['kaggle']['username']
+                key = st.secrets['kaggle']['key']
+            elif 'KAGGLE_USERNAME' in st.secrets and 'KAGGLE_KEY' in st.secrets:
+                username = st.secrets['KAGGLE_USERNAME']
+                key = st.secrets['KAGGLE_KEY']
+        
+        if not (username and key):
+            st.error("Kaggle API credentials not found.")
+            st.info("Please set KAGGLE_USERNAME and KAGGLE_KEY environment variables or add them to Streamlit secrets.")
+            return False
+            
+        # Set environment variables
+        os.environ['KAGGLE_USERNAME'] = username
+        os.environ['KAGGLE_KEY'] = key
+        return True
+        
+    except Exception as e:
+        st.error(f"Error setting up Kaggle: {str(e)}")
+        return False
+
 def fetch_and_load_kaggle_dataset(dataset_slug, download_path='/tmp/kaggle_data'):
     """Downloads a dataset from Kaggle, unzips it, and loads data from the first CSV or Excel file found."""
     if not KAGGLE_AVAILABLE:
         st.error("Kaggle API is not available in this environment.")
         return None
-
-    # Set up Kaggle credentials from Streamlit secrets
-    try:
-        # Try the new format first (nested under [kaggle] section)
-        if 'kaggle' in st.secrets and 'username' in st.secrets['kaggle'] and 'key' in st.secrets['kaggle']:
-            os.environ['KAGGLE_USERNAME'] = st.secrets['kaggle']['username']
-            os.environ['KAGGLE_KEY'] = st.secrets['kaggle']['key']
-        # Try the flat format as fallback
-        elif 'KAGGLE_USERNAME' in st.secrets and 'KAGGLE_KEY' in st.secrets:
-            os.environ['KAGGLE_USERNAME'] = st.secrets['KAGGLE_USERNAME']
-            os.environ['KAGGLE_KEY'] = st.secrets['KAGGLE_KEY']
-        else:
-            st.error("Kaggle API credentials not found in Streamlit secrets.")
-            st.info("Please add your Kaggle credentials in the Streamlit secrets using this format:")
-            st.code('''[kaggle]\nusername = "your_kaggle_username"\nkey = "your_kaggle_key"''')
-            return None
-            
-        # Create .kaggle directory and write the credentials file
-        kaggle_dir = os.path.expanduser('~/.kaggle')
-        os.makedirs(kaggle_dir, exist_ok=True)
         
-        with open(os.path.join(kaggle_dir, 'kaggle.json'), 'w') as f:
-            f.write(f'{{"username":"{os.environ["KAGGLE_USERNAME"]}","key":"{os.environ["KAGGLE_KEY"]}"}}')
-        
-        # Set the correct permissions
-        os.chmod(os.path.join(kaggle_dir, 'kaggle.json'), 0o600)
-        
-    except Exception as e:
-        st.error(f"Error setting up Kaggle credentials: {str(e)}")
+    # Set up Kaggle
+    if not setup_kaggle():
         return None
         
     # Clean up download directory
@@ -147,6 +151,27 @@ def fetch_and_load_kaggle_dataset(dataset_slug, download_path='/tmp/kaggle_data'
                     df = pd.read_json(file_path)
                 elif file_ext == '.parquet':
                     df = pd.read_parquet(file_path)
+                elif file_ext == '.numbers':
+                    # Handle Apple Numbers file
+                    from numbers_parser import Document
+                    doc = Document(file_path)
+                    sheets = doc.sheets
+                    tables = sheets[0].tables
+                    rows = tables[0].rows()
+                    
+                    # Convert to DataFrame
+                    data = []
+                    for row in rows[1:]:  # Skip header
+                        data.append([cell.value for cell in row])
+                    
+                    if not data:
+                        st.warning(f"No data found in {os.path.basename(file_path)}")
+                        continue
+                        
+                    df = pd.DataFrame(
+                        data,
+                        columns=[str(cell.value) for cell in rows[0]]  # Use first row as header
+                    )
                 else:
                     continue
                 
