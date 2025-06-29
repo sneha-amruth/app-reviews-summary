@@ -2,7 +2,11 @@ import streamlit as st
 import pandas as pd
 import datetime as dt
 import os
-from kaggle.api.kaggle_api_extended import KaggleApi
+try:
+    from kaggle.api.kaggle_api_extended import KaggleApi
+    KAGGLE_AVAILABLE = True
+except ImportError:
+    KAGGLE_AVAILABLE = False
 from numbers_parser import Document
 
 # Try to import plotly, but make it optional
@@ -58,51 +62,89 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+def load_uploaded_file(uploaded_file):
+    """Load data from an uploaded file (CSV or Excel)."""
+    try:
+        if uploaded_file.name.endswith('.csv'):
+            return pd.read_csv(uploaded_file)
+        elif uploaded_file.name.endswith(('.xls', '.xlsx')):
+            return pd.read_excel(uploaded_file)
+        else:
+            st.error("Unsupported file format. Please upload a CSV or Excel file.")
+            return None
+    except Exception as e:
+        st.error(f"Error reading file: {e}")
+        return None
+
 def fetch_and_load_kaggle_dataset(dataset_slug, download_path='/tmp/kaggle_data'):
     """Downloads a dataset from Kaggle, unzips it, and loads data from the first CSV or Numbers file found."""
+    if not KAGGLE_AVAILABLE:
+        st.error("Kaggle API is not available in this environment. Please upload your data file directly.")
+        return None
+        
     if not os.path.exists(download_path):
         os.makedirs(download_path)
 
-    api = KaggleApi()
-    api.authenticate()
-    
-    st.info(f"Downloading dataset '{dataset_slug}' from Kaggle...")
-    api.dataset_download_files(dataset_slug, path=download_path, unzip=True)
-    st.info("Download complete. Loading data...")
+    try:
+        api = KaggleApi()
+        api.authenticate()
+        
+        st.info(f"Downloading dataset '{dataset_slug}' from Kaggle...")
+        api.dataset_download_files(dataset_slug, path=download_path, unzip=True)
+        st.info("Download complete. Loading data...")
 
-    for file in os.listdir(download_path):
-        if file.endswith('.csv'):
-            file_path = os.path.join(download_path, file)
-            try:
-                df = pd.read_csv(file_path)
-                st.success(f"Successfully loaded data from '{file}'.")
-                return df
-            except Exception as e:
-                st.error(f"Failed to read CSV file '{file}': {e}")
-                return pd.DataFrame()
-
-    for file in os.listdir(download_path):
-        if file.endswith('.numbers'):
-            file_path = os.path.join(download_path, file)
-            try:
-                doc = Document(file_path)
-                sheets = doc.sheets
-                tables = sheets[0].tables
-                rows_as_cells = tables[0].rows()
-                header = [cell.value for cell in rows_as_cells[0]]
-                data_values = [[cell.value for cell in row] for row in rows_as_cells[1:]]
-                df = pd.DataFrame(data_values, columns=header)
-                st.success(f"Successfully loaded data from Apple Numbers file '{file}'.")
-                return df
-            except Exception as e:
-                st.error(f"Failed to read Numbers file '{file}': {e}")
-                return pd.DataFrame()
-    
-    st.error("No compatible CSV or Numbers file found in the downloaded dataset.")
-    return pd.DataFrame()
+        for file in os.listdir(download_path):
+            if file.endswith(('.csv', '.xls', '.xlsx')):
+                file_path = os.path.join(download_path, file)
+                try:
+                    if file.endswith('.csv'):
+                        df = pd.read_csv(file_path)
+                    else:  # Excel files
+                        df = pd.read_excel(file_path)
+                    st.success(f"Successfully loaded data from '{file}'.")
+                    return df
+                except Exception as e:
+                    st.error(f"Failed to read file '{file}': {e}")
+                    continue
+        
+        st.error("No compatible CSV or Excel file found in the downloaded dataset.")
+        return None
+        
+    except Exception as e:
+        st.error(f"Error accessing Kaggle: {e}")
+        st.info("Please make sure you have set up your Kaggle API credentials correctly.")
+        return None
 
 # App title
 st.title("📱 App Review Analyzer")
+
+# Data source selection
+data_source = st.radio(
+    "Select data source:",
+    ["Upload a file", "Use Kaggle dataset"],
+    horizontal=True
+)
+
+if data_source == "Upload a file":
+    uploaded_file = st.file_uploader("Upload your app reviews (CSV or Excel)", type=['csv', 'xlsx', 'xls'])
+    if uploaded_file is not None:
+        reviews_df = load_uploaded_file(uploaded_file)
+        if reviews_df is not None:
+            st.session_state['current_reviews'] = reviews_df
+            st.session_state['current_app'] = "Uploaded Data"
+else:
+    # Kaggle dataset input
+    dataset_slug = st.text_input(
+        "Enter Kaggle dataset (e.g., 'username/dataset-name')",
+        help="The dataset should be in CSV or Excel format with app review data"
+    )
+    
+    if st.button("Load from Kaggle") and dataset_slug:
+        with st.spinner("Fetching data from Kaggle..."):
+            reviews_df = fetch_and_load_kaggle_dataset(dataset_slug)
+            if reviews_df is not None:
+                st.session_state['current_reviews'] = reviews_df
+                st.session_state['current_app'] = f"Kaggle: {dataset_slug}"
 
 # Add a divider
 st.markdown("---")

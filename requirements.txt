@@ -5,3 +5,4 @@ kaggle
 numbers-parser
 vaderSentiment
 emoji==2.6.0
+openpyxl
